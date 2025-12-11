@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::Arc;
 use tokio::sync::oneshot;
+use opentelemetry::KeyValue;
 #[derive(Debug, Clone)]
 pub struct WasmSpan {
     pub runtime_id: Uuid,
@@ -15,6 +16,7 @@ pub struct WasmSpan {
 pub trait WasmObserver: Send + Sync + 'static {
     fn on_func_enter(&self, runtime_id: Uuid, func_name: &str);
     fn on_func_exit(&self, runtime_id: Uuid, func_name: &str, duration_ns: u64);
+    fn record_event(&self, name: &str, attributes: Vec<KeyValue>);
 }
 
 pub struct TelemetryObserver {
@@ -103,5 +105,21 @@ impl WasmObserver for TelemetryObserver {
             };
             let _ = self.sender.send(span);
         }
+    }
+
+    fn record_event(&self, name: &str, attributes: Vec<KeyValue>) {
+        let start_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as u64;
+
+        let event_span = WasmSpan {
+            runtime_id: Uuid::new_v4(),
+            function_name: format!("event::{}", name),
+            start_time_ns: start_time,
+            end_time_ns: start_time + 1000, // Duración simbólica 1μs
+        };
+
+        let _ = self.sender.send(event_span);
     }
 }

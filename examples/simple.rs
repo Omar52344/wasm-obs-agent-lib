@@ -1,7 +1,7 @@
 use wasmtime::*;
-use wasm_obs_agent_lib::{instrument_module, TelemetryObserver,TelemetryObserverBuilder};
+use wasm_obs_agent_lib::{instrument_module, TelemetryObserver, TelemetryObserverBuilder, WasmObserver};
 use std::time::Duration;
-
+use opentelemetry::KeyValue;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let engine = Engine::default();
@@ -29,6 +29,19 @@ async fn main() -> anyhow::Result<()> {
     .with_service_name("payment-host")  // Nombre único por host
     .with_environment("production"); // Aquí se lanza el exporter en Tokio
     let observer = builder.build();
+
+    observer.record_event("wasm_execution_success", vec![
+    KeyValue::new("module", "payment.wasm"),
+    KeyValue::new("status", "success"),
+    KeyValue::new("duration_ms", "12"),
+    ]);
+
+    // O para error
+    observer.record_event("wasm_execution_failed", vec![
+        KeyValue::new("error", "invalid_input"),
+        KeyValue::new("module", "payment.wasm"),
+    ]);
+
     let funcs = instrument_module(&mut store, &module, observer)?;
 
     // Pruebas
