@@ -1,5 +1,5 @@
 use wasmtime::*;
-use wasm_obs_agent_lib::{instrument_module, TelemetryObserver};
+use wasm_obs_agent_lib::{instrument_module, TelemetryObserver,TelemetryObserverBuilder};
 use std::time::Duration;
 
 #[tokio::main]
@@ -25,7 +25,10 @@ async fn main() -> anyhow::Result<()> {
     let module = Module::new(&engine, wat)?;
     let mut store = Store::new(&engine, ());
 
-    let observer = TelemetryObserver::new(); // Aquí se lanza el exporter en Tokio
+    let builder = TelemetryObserverBuilder::new()
+    .with_service_name("payment-host")  // Nombre único por host
+    .with_environment("production"); // Aquí se lanza el exporter en Tokio
+    let observer = builder.build();
     let funcs = instrument_module(&mut store, &module, observer)?;
 
     // Pruebas

@@ -2,7 +2,8 @@ use tokio::sync::mpsc::UnboundedSender;
 use uuid::Uuid;
 use std::collections::HashMap;
 use std::sync::Mutex;
-
+use std::sync::Arc;
+use tokio::sync::oneshot;
 #[derive(Debug, Clone)]
 pub struct WasmSpan {
     pub runtime_id: Uuid,
@@ -19,6 +20,67 @@ pub trait WasmObserver: Send + Sync + 'static {
 pub struct TelemetryObserver {
     pub(crate) pending_starts: Mutex<HashMap<Uuid, u64>>,
     pub(crate) sender: UnboundedSender<WasmSpan>,
+}
+
+pub struct TelemetryObserverBuilder {
+    endpoint: String,
+    service_name: String,
+    environment: String,
+}
+
+impl TelemetryObserverBuilder {
+    pub fn new() -> Self {
+        Self {
+            endpoint: std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+                .unwrap_or("http://127.0.0.1:4318/v1/traces".to_string()),
+            service_name: std::env::var("OTEL_SERVICE_NAME")
+                .unwrap_or("wasm-obs-agent".to_string()),
+            environment: std::env::var("OTEL_ENVIRONMENT")
+                .unwrap_or("development".to_string()),
+        }
+    }
+
+    pub fn with_endpoint(mut self, endpoint: impl Into<String>) -> Self {
+        self.endpoint = endpoint.into();
+        self
+    }
+
+    pub fn with_service_name(mut self, name: impl Into<String>) -> Self {
+        self.service_name = name.into();
+        self
+    }
+
+    pub fn with_environment(mut self, env: impl Into<String>) -> Self {
+        self.environment = env.into();
+        self
+    }
+
+    pub fn build(self) -> Arc<TelemetryObserver> {
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+        
+        let observer = Arc::new(TelemetryObserver {
+            pending_starts: Mutex::new(HashMap::new()),
+            sender: sender.clone(),
+        });
+
+        tokio::spawn(crate::exporter::run_otlp_exporter(
+            receiver,
+            self.endpoint,
+            self.service_name,
+            self.environment,
+        ));
+
+        observer
+    }
+}
+
+impl TelemetryObserver {
+    pub fn with_channel(sender: UnboundedSender<WasmSpan>) -> Self {
+        Self {
+            pending_starts: Mutex::new(HashMap::new()),
+            sender,
+        }
+    }
 }
 
 impl WasmObserver for TelemetryObserver {
