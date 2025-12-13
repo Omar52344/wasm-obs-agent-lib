@@ -1,92 +1,40 @@
-use opentelemetry::{
-    global,
-    trace::{SpanBuilder, SpanKind,Tracer},
-    KeyValue,
-};
+// src/exporter.rs
+use opentelemetry::global;
+use opentelemetry::KeyValue;
+use opentelemetry_otlp::SpanExporter;
 use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::{
-    runtime::Tokio,
-    trace::{BatchConfigBuilder, config as trace_config},
-    Resource,
-};
-use tokio::sync::mpsc;
-use crate::observer::WasmSpan;
-use std::time::{Duration, UNIX_EPOCH};
-use tokio::sync::oneshot;
+use opentelemetry_sdk::trace::SdkTracerProvider;
+use opentelemetry_sdk::Resource;
+use std::time::Duration;
 
-pub async fn run_otlp_exporter(
-    mut rx: mpsc::UnboundedReceiver<WasmSpan>,
-    endpoint: String,
-    service_name: String,
-    environment: String,
-) {
-    println!("🛠️ Exporter task iniciada");
-    println!("🛠️ Configurando exportador OTLP a: {}", endpoint);
+pub fn init_otlp_tracer(
+    endpoint: &str,
+    service_name: &str,
+    environment: &str,
+) -> Result<SdkTracerProvider, anyhow::Error> {
+    let resource = Resource::builder()
+        .with_attributes([
+            KeyValue::new("service.name", service_name.to_string()),
+            KeyValue::new("environment", environment.to_string()),
+        ])
+        .build();
 
-    let resource = Resource::new(vec![
-        KeyValue::new("service.name", service_name),
-        KeyValue::new("environment", environment),
-    ]);
+    let exporter = SpanExporter::builder()
+        .with_http()
+        .with_endpoint(endpoint)
+        .build()?;
 
-    let exporter_builder = opentelemetry_otlp::new_exporter()
-        .http()
-        .with_endpoint(&endpoint);
+    let tracer_provider = SdkTracerProvider::builder()
+        .with_simple_exporter(exporter) // simple_exporter envía inmediatamente (perfecto para MVP)
+        .with_resource(resource)
+        .build();
 
-    let pipeline_result = opentelemetry_otlp::new_pipeline()
-        .tracing()
-        .with_exporter(exporter_builder)
-        .with_trace_config(trace_config().with_resource(resource))
-        .with_batch_config(
-            BatchConfigBuilder::default()
-                .with_scheduled_delay(Duration::from_millis(500))
-                .with_max_export_batch_size(512)
-                .with_max_queue_size(2048)
-                .build()
-        )
-        .install_batch(Tokio);
+    global::set_tracer_provider(tracer_provider.clone());
 
-    let tracer = match pipeline_result {
-        Ok(_) => {
-            println!("✅ Pipeline OTLP instalado correctamente");
-            global::tracer("wasm-obs-agent")
-        }
-        Err(e) => {
-            eprintln!("❌ Error instalando pipeline OTLP: {}", e);
-            return; // Salir temprano si falla
-        }
-    };
+    println!("✅ OTLP tracer inicializado (endpoint: {})", endpoint);
 
-    println!("🛠️ Exportador OTLP listo y esperando spans...");
-
-    while let Some(span) = rx.recv().await {
-        println!("📡 Procesando span para función: {}", span.function_name);
-
-        if span.end_time_ns <= span.start_time_ns {
-            println!("⚠️ Ignorando span con duración inválida (<=0) para {}", span.function_name);
-            continue;
-        }
-
-        let start_time = UNIX_EPOCH + Duration::from_nanos(span.start_time_ns);
-        let end_time = UNIX_EPOCH + Duration::from_nanos(span.end_time_ns);
-
-        let mut builder = SpanBuilder::from_name(format!("wasm::{}", span.function_name));
-        builder.span_kind = Some(SpanKind::Internal);
-        builder.start_time = Some(start_time);
-        builder.end_time = Some(end_time);
-        
-        builder.attributes = Some(vec![
-            KeyValue::new("wasm.runtime_id", span.runtime_id.to_string()),
-        ]);
-
-        println!(
-            "📤 Enviando span completo: {} (duración: {} ns)",
-            span.function_name,
-            span.end_time_ns - span.start_time_ns
-        );
-
-        tracer.build(builder); // Span se finaliza automáticamente
-    }
-
-    global::shutdown_tracer_provider();
-    println!("✅ Shutdown de OTLP completado.");
+    Ok(tracer_provider)
+}
+pub fn get_tracer() -> opentelemetry::global::BoxedTracer {
+    global::tracer("orches")
 }

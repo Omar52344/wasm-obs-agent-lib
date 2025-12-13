@@ -1,10 +1,14 @@
-use tokio::sync::mpsc::UnboundedSender;
-use uuid::Uuid;
-use std::collections::HashMap;
-use std::sync::Mutex;
-use std::sync::Arc;
-use tokio::sync::oneshot;
+use opentelemetry::global::ObjectSafeSpan;
+use opentelemetry::trace::Tracer;
 use opentelemetry::KeyValue;
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::time::Duration;
+use std::time::SystemTime;
+use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::oneshot;
+use uuid::Uuid;
 #[derive(Debug, Clone)]
 pub struct WasmSpan {
     pub runtime_id: Uuid,
@@ -21,7 +25,6 @@ pub trait WasmObserver: Send + Sync + 'static {
 
 pub struct TelemetryObserver {
     pub(crate) pending_starts: Mutex<HashMap<Uuid, u64>>,
-    pub(crate) sender: UnboundedSender<WasmSpan>,
 }
 
 pub struct TelemetryObserverBuilder {
@@ -37,8 +40,7 @@ impl TelemetryObserverBuilder {
                 .unwrap_or("http://127.0.0.1:4318/v1/traces".to_string()),
             service_name: std::env::var("OTEL_SERVICE_NAME")
                 .unwrap_or("wasm-obs-agent".to_string()),
-            environment: std::env::var("OTEL_ENVIRONMENT")
-                .unwrap_or("development".to_string()),
+            environment: std::env::var("OTEL_ENVIRONMENT").unwrap_or("development".to_string()),
         }
     }
 
@@ -58,21 +60,13 @@ impl TelemetryObserverBuilder {
     }
 
     pub fn build(self) -> Arc<TelemetryObserver> {
-        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
-        
-        let observer = Arc::new(TelemetryObserver {
+        // Inicializamos el tracer global UNA SOLA VEZ
+        crate::exporter::init_otlp_tracer(&self.endpoint, &self.service_name, &self.environment)
+            .expect("Failed to initialize OTLP tracer");
+
+        Arc::new(TelemetryObserver {
             pending_starts: Mutex::new(HashMap::new()),
-            sender: sender.clone(),
-        });
-
-        tokio::spawn(crate::exporter::run_otlp_exporter(
-            receiver,
-            self.endpoint,
-            self.service_name,
-            self.environment,
-        ));
-
-        observer
+        })
     }
 }
 
@@ -80,7 +74,6 @@ impl TelemetryObserver {
     pub fn with_channel(sender: UnboundedSender<WasmSpan>) -> Self {
         Self {
             pending_starts: Mutex::new(HashMap::new()),
-            sender,
         }
     }
 }
@@ -91,35 +84,33 @@ impl WasmObserver for TelemetryObserver {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos() as u64;
-        self.pending_starts.lock().unwrap().insert(runtime_id, start_ns);
+        self.pending_starts
+            .lock()
+            .unwrap()
+            .insert(runtime_id, start_ns);
     }
 
     fn on_func_exit(&self, runtime_id: Uuid, func_name: &str, duration_ns: u64) {
         if let Some(start_ns) = self.pending_starts.lock().unwrap().remove(&runtime_id) {
             let end_ns = start_ns + duration_ns;
-            let span = WasmSpan {
-                runtime_id,
-                function_name: func_name.to_string(),
-                start_time_ns: start_ns,
-                end_time_ns: end_ns,
-            };
-            let _ = self.sender.send(span);
+
+            let tracer = crate::exporter::get_tracer();
+
+            let mut span = tracer.start(format!("wasm::{}", func_name));
+            span.set_attribute(KeyValue::new("wasm.runtime_id", runtime_id.to_string()));
+            span.end_with_timestamp(std::time::SystemTime::now() + Duration::from_nanos(end_ns));
         }
     }
 
     fn record_event(&self, name: &str, attributes: Vec<KeyValue>) {
-        let start_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos() as u64;
+        let tracer = crate::exporter::get_tracer();
 
-        let event_span = WasmSpan {
-            runtime_id: Uuid::new_v4(),
-            function_name: format!("event::{}", name),
-            start_time_ns: start_time,
-            end_time_ns: start_time + 1000, // Duración simbólica 1μs
-        };
+        let mut span = tracer.start(format!("event::{}", name));
 
-        let _ = self.sender.send(event_span);
+        for attr in attributes {
+            span.set_attribute(attr);
+        }
+
+        span.end();
     }
 }
