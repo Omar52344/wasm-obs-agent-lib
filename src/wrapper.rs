@@ -31,6 +31,22 @@ where
         })
     }
 
+    pub async fn new_async(
+        store: &mut Store<T>,
+        linker: &Linker<T>,
+        module: &Module,
+        observer: Arc<dyn WasmObserver>,
+    ) -> Result<Self, anyhow::Error> {
+        let inner = linker.instantiate_async(&mut *store, module).await?;
+
+        Ok(Self {
+            inner,
+            store: store as *mut _,
+            observer,
+            cache: RefCell::new(HashMap::new()),
+        })
+    }
+
     pub fn get_func(&self, store: &mut Store<T>, name: &str) -> Option<Func> {
         let store_mut: &mut Store<T> = unsafe { &mut *self.store };
 
