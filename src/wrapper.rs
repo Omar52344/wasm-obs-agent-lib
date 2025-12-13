@@ -11,7 +11,7 @@ pub struct ObservedInstance<T> {
     observer: Arc<dyn WasmObserver>, // Aquí está el cambio clave
     cache: RefCell<HashMap<String, Func>>,
 }
-
+unsafe impl<T> Send for ObservedInstance<T> where T: Send {}
 impl<T> ObservedInstance<T>
 where
     T: Send + 'static,
