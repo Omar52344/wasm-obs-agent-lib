@@ -85,7 +85,7 @@ where
 fn instrument_function<T>(
     store: &mut Store<T>,
     original: Func,
-    observer: Arc<dyn WasmObserver>, // Aquí el cambio
+    observer: Arc<dyn WasmObserver>,
     name: String,
 ) -> Result<Func, anyhow::Error>
 where
@@ -93,21 +93,27 @@ where
 {
     let ty = original.ty(&mut *store);
 
-    Ok(Func::new(
+    Ok(Func::new_async(
         store,
         ty.clone(),
-        move |mut caller: Caller<'_, T>, params: &[Val], results: &mut [Val]| -> Result<()> {
-            let runtime_id = uuid::Uuid::new_v4();
-            let start = std::time::Instant::now();
+        move |mut caller, params, results| {
+            let observer = observer.clone();
+            let name = name.clone();
+            let original = original.clone();
 
-            observer.on_func_enter(runtime_id, &name);
+            Box::new(async move {
+                let runtime_id = uuid::Uuid::new_v4();
+                let start = std::time::Instant::now();
 
-            let result = original.call(&mut caller, params, results);
+                observer.on_func_enter(runtime_id, &name);
 
-            let duration = start.elapsed().as_nanos() as u64;
-            observer.on_func_exit(runtime_id, &name, duration);
+                let result = original.call_async(&mut caller, params, results).await;
 
-            result.map_err(Into::into)
+                let duration = start.elapsed().as_nanos() as u64;
+                observer.on_func_exit(runtime_id, &name, duration);
+
+                result.map_err(Into::into)
+            })
         },
     ))
 }
