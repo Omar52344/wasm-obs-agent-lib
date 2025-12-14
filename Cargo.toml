@@ -1,6 +1,6 @@
 [package]
 name = "wasm-obs-agent-lib"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 description = "Auto-instrumentación de módulos WASM con OpenTelemetry"
 license = "MIT OR Apache-2.0"
@@ -11,6 +11,7 @@ categories = ["development-tools", "wasm"]
 [dependencies]
 reqwest = { version = "0.12", features = ["json"] }
 wasmtime = "24.0"
+wasmtime-wasi = "24.0.0"
 opentelemetry = "0.31"
 opentelemetry_sdk = { version = "0.31", features = ["rt-tokio", "trace"] }
 opentelemetry-otlp = { version = "0.31", features = ["http-proto", "reqwest-client"], default-features = false }

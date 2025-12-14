@@ -1,10 +1,22 @@
+use once_cell::sync::Lazy;
 use opentelemetry::KeyValue;
 use std::time::Duration;
-use wasm_obs_agent_lib::{ObservedInstance, TelemetryObserverBuilder, WasmObserver};
+use std::{path::Path, sync::Arc};
+use wasm_obs_agent_lib::{
+    ObservedInstance, TelemetryObserver, TelemetryObserverBuilder, WasmObserver,
+};
 use wasmtime::*;
+use wasmtime_wasi::preview1::WasiP1Ctx;
+use wasmtime_wasi::preview1::{self, wasi_snapshot_preview1};
+use wasmtime_wasi::WasiCtxBuilder;
+
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let engine = Engine::default();
+    let mut config = Config::new();
+    config.async_support(true);
+    let engine = Engine::new(&config)?;
+
     let wat = r#"
         (module
             (func $add (param i32 i32) (result i32)
@@ -23,28 +35,22 @@ async fn main() -> anyhow::Result<()> {
         )
     "#;
     let module = Module::new(&engine, wat)?;
-    let mut store = Store::new(&engine, ());
 
-    /*let builder = TelemetryObserverBuilder::new()
-        .with_service_name("payment-host")  // Nombre único por host
-        .with_environment("production"); // Aquí se lanza el exporter en Tokio
-        let observer = builder.build();
-    */
-    let observer = TelemetryObserverBuilder::new()
-        .with_service_name("payment-host")
-        .with_environment("production")
-        .build();
+    let wasi = WasiCtxBuilder::new()
+        .inherit_stdio()
+        .inherit_env()
+        .build_p1(); //
+    let mut store = Store::new(&engine, wasi);
 
-    observer.record_event(
-        "wasm_execution_success",
-        vec![
-            KeyValue::new("module", "payment.wasm"),
-            KeyValue::new("status", "success"),
-            KeyValue::new("duration_ms", "12"),
-        ],
-    );
 
-    // O para error
+        let observer: Lazy<Arc<TelemetryObserver>> = Lazy::new(|| {
+        TelemetryObserverBuilder::new()
+            .with_service_name("orches")
+            .with_environment("runtime")
+            .with_endpoint("http://127.0.0.1:4318/v1/traces")
+            .build()
+    });
+    //evento simple de error
     observer.record_event(
         "wasm_execution_failed",
         vec![
@@ -52,27 +58,28 @@ async fn main() -> anyhow::Result<()> {
             KeyValue::new("module", "payment.wasm"),
         ],
     );
-
     //let funcs = instrument_module(&mut store, &module, observer)?;
+    let mut linker = Linker::new(&engine);
 
+    wasi_snapshot_preview1::add_to_linker(&mut linker, |ctx: &mut WasiP1Ctx| ctx)?;
     // Pruebas
-    let intance = ObservedInstance::new(&mut store, &module, observer)?;
-    let mut results = [Val::I32(0)];
-    intance.get_func(&mut store, "add").unwrap().call(
-        &mut store,
-        &[Val::I32(5), Val::I32(3)],
-        &mut results,
-    )?;
-    println!("➕ add(5,3) = {}", results[0].i32().unwrap());
+    let instance =
+        ObservedInstance::new_async(&mut store, &linker, &module, observer.clone()).await?;
+    
+    
+    
+    let func = instance
+        .get_func(&mut store, "add")
+        .ok_or_else(|| anyhow::anyhow!("Function '{}' not found", "add"))?;
 
-    intance.get_func(&mut store, "multiply").unwrap().call(
-        &mut store,
-        &[Val::I32(4), Val::I32(7)],
-        &mut results,
-    )?;
-    println!("✖️ multiply(4,7) = {}", results[0].i32().unwrap());
-    // instance.observer.record_event(...) si lo expones, o usa el observer original
-    // Dale tiempo al batch exporter para flush (500ms config)
+    let func = func.typed::<(i32, i32), i32>(&store)?;
+    let result = func.call_async(&mut store, (5, 3)).await?;
+
+
+    println!("➕ add() = {}", result);
+
+
+
     tokio::time::sleep(Duration::from_secs(3)).await;
 
     println!("✅ Ejemplo completado. Revisa Jaeger para ver las traces.");
