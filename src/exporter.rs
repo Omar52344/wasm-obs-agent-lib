@@ -1,8 +1,11 @@
 // src/exporter.rs
+
 use opentelemetry::global;
 use opentelemetry::KeyValue;
 use opentelemetry_otlp::SpanExporter;
 use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::runtime;
+use opentelemetry_sdk::trace::BatchSpanProcessor;
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use opentelemetry_sdk::Resource;
 use std::time::Duration;
@@ -25,7 +28,10 @@ pub fn init_otlp_tracer(
         .build()?;
 
     let tracer_provider = SdkTracerProvider::builder()
-        .with_simple_exporter(exporter) // simple_exporter envía inmediatamente (perfecto para MVP)
+        // En lugar de with_batch_exporter directo, usamos el procesador con runtime
+        .with_span_processor(
+            sdktrace::BatchSpanProcessor::builder(exporter, runtime::Tokio).build(),
+        )
         .with_resource(resource)
         .build();
 

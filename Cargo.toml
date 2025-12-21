@@ -12,8 +12,8 @@ categories = ["development-tools", "wasm"]
 reqwest = { version = "0.12", features = ["json"] }
 wasmtime = "24.0"
 wasmtime-wasi = "24.0.0"
-opentelemetry = "0.31"
-opentelemetry_sdk = { version = "0.31", features = ["rt-tokio", "trace"] }
+opentelemetry = {version ="0.31",features = ["trace"]}
+opentelemetry_sdk = { version = "0.31", features = ["rt-tokio", "trace", "macros"] }
 opentelemetry-otlp = { version = "0.31", features = ["http-proto", "reqwest-client"], default-features = false }
 tokio = { version = "1.0", features = ["rt-multi-thread", "macros"] }
 uuid = { version = "1.0", features = ["v4"] }
