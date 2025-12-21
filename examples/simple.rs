@@ -10,7 +10,6 @@ use wasmtime_wasi::preview1::WasiP1Ctx;
 use wasmtime_wasi::preview1::{self, wasi_snapshot_preview1};
 use wasmtime_wasi::WasiCtxBuilder;
 
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let mut config = Config::new();
@@ -25,7 +24,7 @@ async fn main() -> anyhow::Result<()> {
                 i32.add
             )
             (export "add" (func $add))
-            
+
             (func $multiply (param i32 i32) (result i32)
                 local.get 0
                 local.get 1
@@ -42,10 +41,9 @@ async fn main() -> anyhow::Result<()> {
         .build_p1(); //
     let mut store = Store::new(&engine, wasi);
 
-
-        let observer: Lazy<Arc<TelemetryObserver>> = Lazy::new(|| {
+    let observer: Lazy<Arc<TelemetryObserver>> = Lazy::new(|| {
         TelemetryObserverBuilder::new()
-            .with_service_name("orches")
+            .with_service_name("otro")
             .with_environment("runtime")
             .with_endpoint("http://127.0.0.1:4318/v1/traces")
             .build()
@@ -65,9 +63,7 @@ async fn main() -> anyhow::Result<()> {
     // Pruebas
     let instance =
         ObservedInstance::new_async(&mut store, &linker, &module, observer.clone()).await?;
-    
-    
-    
+
     let func = instance
         .get_func(&mut store, "add")
         .ok_or_else(|| anyhow::anyhow!("Function '{}' not found", "add"))?;
@@ -75,10 +71,7 @@ async fn main() -> anyhow::Result<()> {
     let func = func.typed::<(i32, i32), i32>(&store)?;
     let result = func.call_async(&mut store, (5, 3)).await?;
 
-
     println!("➕ add() = {}", result);
-
-
 
     tokio::time::sleep(Duration::from_secs(3)).await;
 
