@@ -4,10 +4,10 @@ use opentelemetry::global;
 use opentelemetry::KeyValue;
 use opentelemetry_otlp::SpanExporter;
 use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::runtime;
-use opentelemetry_sdk::trace::BatchSpanProcessor;
+// Necesitas esto para vincularlo a Tokiouse opentelemetry_sdk::trace::BatchSpanProcessor;
+use crate::exporter::sdktrace::BatchSpanProcessor;
 use opentelemetry_sdk::trace::SdkTracerProvider;
-use opentelemetry_sdk::Resource;
+use opentelemetry_sdk::{runtime, trace as sdktrace, Resource};
 use std::time::Duration;
 
 pub fn init_otlp_tracer(
@@ -27,11 +27,13 @@ pub fn init_otlp_tracer(
         .with_endpoint(endpoint)
         .build()?;
 
+    // En la 0.31, se prefiere usar el pipeline completo
+    let batch_processor = BatchSpanProcessor::builder(exporter)
+        .with_batch_config(sdktrace::BatchConfig::default())
+        .build(); // Aquí el runtime se infiere si las features están bien
+
     let tracer_provider = SdkTracerProvider::builder()
-        // En lugar de with_batch_exporter directo, usamos el procesador con runtime
-        .with_span_processor(
-            sdktrace::BatchSpanProcessor::builder(exporter, runtime::Tokio).build(),
-        )
+        .with_simple_exporter(exporter)
         .with_resource(resource)
         .build();
 
